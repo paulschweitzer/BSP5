@@ -2,19 +2,21 @@ import numpy as np
 import pandas as pd
 
 
-def modify_sample(x0, args, model, classifier='linear', lr=1e-2, epsilon=1e-4, iterations=200, d_max=50):
+def modify_sample(x0, args, model, x, classifier='linear', lr=5e-1, epsilon=1e-4, iterations=200, l=1000, h=10, d_max=1):
     
     gradient = compute_gradient(x0, args, classifier)
 
-    modified = np.zeros(x0.shape)
-    modified = evasion_gradient_descent(
+    modified = evasion_gradient_descent_penalized(
         x0=x0,
         gradient=gradient,
         t=lr,
         epsilon=epsilon,
         max_iter=iterations,
+        x=x,
+        l=l,
+        h=h,
         d_max=d_max
-        )
+    )
 
     pred = model.predict([modified])
     print(f"Predicted class: {pred}")
@@ -41,7 +43,7 @@ def evasion_gradient_descent(x0, gradient, t, epsilon, max_iter, d_max=10):
 
         m += 1
         x_m = x_m - t * gradient
-        # x_m = np.maximum(x_m, 0)
+        
         x_m = project(x_m, x0, d_max)
         if np.linalg.norm(x_m - x0) < epsilon:
             break
@@ -57,17 +59,60 @@ def project(x, x0, d_max):
     return x
 
 
+def penalizer(feature_vector, benign_vectors, l, h):
+    n = benign_vectors.shape[0]
+    p = 0
+    for i in range(n):
+        p = p + np.exp(- (np.linalg.norm(feature_vector - benign_vectors[i]) / h))
+    p = p * (l / n)
+    return p
+
+
+def penalizer_gradient(feature_vector, benign_vectors, l, h):
+    n = benign_vectors.shape[0]
+    grad_p = np.zeros(feature_vector.shape)
+
+    diff = feature_vector - benign_vectors
+    norms = np.sum(np.pow(diff, 2), axis=1)
+    weights = np.exp(- norms / h)
+
+    grad_p = np.sum(weights[:, None] * diff, axis=0)
+    grad_p *= -2 / (n * h)
+    return grad_p
+
+
+
+def evasion_gradient_descent_penalized(x0, gradient, t, epsilon, max_iter, x, l, h=10, d_max=10):
+
+    m = 0
+    x_m = x0
+    prev_F = 10*100
+    for i in range(max_iter):
+
+        m += 1
+        grad_F = gradient - penalizer_gradient(x_m, x, l, h)
+        x_m = x_m - t * grad_F
+        
+        x_m = project(x_m, x0, d_max)
+
+        current_F = penalizer(x_m, x, l, h)
+
+        if np.abs(prev_F - current_F) < epsilon:
+            break
+
+        prev_F = current_F
+
+    x = x_m
+    return x_m
+
+
+
 def rbf_kernel(x, x_i, gamma=0.0001):
     return np.exp(- gamma * np.pow(np.linalg.norm(x - x_i), 2))
 
-def poly_kernel(x, x_i, d=3, c=1):
-    return np.pow((x @ x_i) + c, d)
 
 def gradient_rbf_kernel(x, x_i, gamma):
     return -2 * gamma * np.exp(- gamma * np.pow(np.linalg.norm(x - x_i), 2)) * (x - x_i)
-
-def gradient_poly_kernel(x, x_i, d, c):
-    return d * np.pow(d * (x @ x_i + c), d - 1) * x_i
 
 
 def svm_gradient(weights, feature_vector=None, support_vectors=None, kernel='linear', gamma=0.001):
@@ -90,20 +135,9 @@ def svm_gradient(weights, feature_vector=None, support_vectors=None, kernel='lin
 def tanh(z):
     return np.tanh(z)
 
-def sigmoid(z): 
-    return 1 / (1 + np.exp(-z))
-
-def relu(z):
-    return max(0, z)
 
 def tanh_derivative(z):
     return 1 - np.pow(tanh(z), 2)
-
-def sigmoid_derivative(z):
-    return 1 - sigmoid(z)
-
-def relu_derivative(z):
-    return z>=0
 
 
 def mlp_discriminant(x, hidden_weights, hidden_bias, output_weights, output_bias):
@@ -117,10 +151,10 @@ def mlp_gradient(x, hidden_weights, hidden_bias, output_weights, output_bias):
 
     delta_g = np.zeros(x.shape)
     for i in range(x.shape[0]):
-        # delta_g[i] = g * (1 - np.pow(g, 1)) * (output_weights.T @ (delta_k * (1 - np.pow(delta_k, 1)) * hidden_weights[i]))
         delta_g[i] = g * (1 - np.pow(g, 2)) * (output_weights.T @ (delta_k * (1 - np.pow(delta_k, 2)) * hidden_weights[i]))
 
     return delta_g
+
 
 
 def rename_columns(df: pd.DataFrame):

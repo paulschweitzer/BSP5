@@ -38,6 +38,27 @@ def preprocess_data(data: pd.DataFrame):
     return data[pdfid_columns]
 
 
+def retrieve_scaled_benign_samples(path: str):
+    
+    data = get_data(path)
+    data = preprocess_data(data)
+    
+    class_data = data.drop(columns=['header', 'Class'])
+    x_train, x_test, y_train, y_test = train_test_split(class_data, data['Class'], test_size=0.2, random_state=77)
+
+    # Scale features
+    scaler = RobustScaler()
+    x_train = scaler.fit_transform(x_train)
+    x_test = scaler.transform(x_test)
+
+    benign_samples = class_data[data['Class'] == 0]
+    x_benign_samples = benign_samples.to_numpy().astype(int)
+    x_benign_samples = scaler.transform(x_benign_samples)
+
+    return x_benign_samples
+
+
+
 def train_linear(path: str):
 
     data = get_data(path)
@@ -157,7 +178,7 @@ def train_mlp(path: str):
     x_train_mlp, x_test_mlp, y_train_mlp, y_test_mlp = train_test_split(class_data, data['Class'], test_size=0.2, random_state=77)
 
     # Normalize features
-    normalizer = Normalizer()
+    normalizer = RobustScaler()
     x_train_mlp = normalizer.fit_transform(x_train_mlp)
     x_test_mlp = normalizer.transform(x_test_mlp)
     
